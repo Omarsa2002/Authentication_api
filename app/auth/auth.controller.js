@@ -17,12 +17,13 @@ const { imageKit } = require("../utils/imagekit.js");
 
 
 const chcekEmail = async (email) => {
-    const user = await userModel.findOne({ email: email });
+    const user = await userModel.findOne({email});
     const company = await companyModel.findOne({email});
-    if (user||company) {
-        return { exists: true}; 
+    const userOrCompany = user || company
+    if (userOrCompany) {
+        return { exists: true, userOrCompany}; 
     } else {
-        return { exists: false, user: null };  
+        return { exists: false, userOrCompany: null };  
     }
 };
 
@@ -148,14 +149,14 @@ const signUpCompany = async (req, res, next)=>{
 const verifyEmail =async(req,res,next)=>{
     try {
         const {email,code}=req.body;
-        const {user}=await chcekEmail(email)          
-        if(!user||user.verificationCode!==code||user.verificationCode==null||!validateExpiry(user.verificationCodeDate,"minutes",35)){
+        const {userOrCompany} = await chcekEmail(email)          
+        if(!userOrCompany||userOrCompany.verificationCode!==code||userOrCompany.verificationCode==null||!validateExpiry(userOrCompany.verificationCodeDate,"minutes",35)){
             sendResponse(res,constants.RESPONSE_BAD_REQUEST,"Invalid code or email",{},[])
         }
         else{
-            user.activateEmail = true; 
-            user.verificationCode = null;
-            await user.save()
+            userOrCompany.activateEmail = true; 
+            userOrCompany.verificationCode = null;
+            await userOrCompany.save()
             sendResponse(res,constants.RESPONSE_SUCCESS,"Email confirmed success",{},[])
         }
     } catch (error) {
@@ -165,22 +166,22 @@ const verifyEmail =async(req,res,next)=>{
 }
 
 //.........................resendActivateCode.........................//
-const resendActivateCode=async(req,res,next)=>{
+const resendCode=async(req,res,next)=>{
     try {
         const {email , codeType}=req.body;
-        const {user}=await chcekEmail(email)
-        if(user.activateEmail && codeType==="activate"){
+        const {userOrCompany}=await chcekEmail(email)
+        if(userOrCompany.activateEmail && codeType==="activate"){
             sendResponse(res,constants.RESPONSE_BAD_REQUEST,"Email already confirmed",{},[])
         }
         else{
-            user.verificationCode=randomNumber(),
-            user.verificationCodeDate=currentDate(Date.now())
-            const subject=(codeType==="activate")? "Confirmation Email Send From Sport-Store Application":
-                        "an update password Email Send From Sport-Store Application";
-            const code=user.verificationCode;
-            const info= sendConfirmEmail(user.email,code,subject, codeType)
+            userOrCompany.verificationCode=randomNumber(),
+            userOrCompany.verificationCodeDate=currentDate(Date.now())
+            const subject=(codeType==="activate")? "Confirmation Email Send From Luxi Application":
+                        "an update password Email Send From Luxi Application";
+            const code=userOrCompany.verificationCode;
+            const info= sendConfirmEmail(userOrCompany.email,code,subject, codeType)
             if (info) {
-                await user.save();
+                await userOrCompany.save();
                 sendResponse(res,constants.RESPONSE_CREATED,"Code send successfully","",{});
             } else {
                 sendResponse(res,constants.RESPONSE_BAD_REQUEST,"rejected Eamil", {}, []);
@@ -194,51 +195,69 @@ const resendActivateCode=async(req,res,next)=>{
 //.......................login.........................//
 
 const login = async (req, res, next)=>{
-    passport.authenticate('local', async (err, user, info) => {
-        if (err) {
-            return next(err);
+    try{
+        const {email, password} = req.body;
+        const {userOrCompany}=await chcekEmail(email);
+        if(!userOrCompany){
+            return sendResponse(res, constants.RESPONSE_NOT_FOUND, "this email is not found please try to signup!", {}, [])
         }
-        if (!user) {
-            return sendResponse(res, constants.RESPONSE_BAD_REQUEST, info.message, {}, [])
+        const isPasswordCorrect =  await userOrCompany.comparePassword(password)
+        if(!isPasswordCorrect){
+            return sendResponse(res, constants.RESPONSE_FORBIDDEN, "Incorrect password.", {}, [])
         }
-        const accToken = await jwtGenerator({ userId: user.userId, role:user.role }, 24, "h");
-        const existingToken = await tokenSchema.findOne({ userId: user.userId });
+        if(userOrCompany.activateAccount === false){
+            return sendResponse(res, constants.RESPONSE_FORBIDDEN, "your application is being reviewed", {}, [])
+        }
+        if(!userOrCompany.activateEmail){
+            const code = randomNumber();
+            userOrCompany.verificationCode = code;
+            userOrCompany.verificationCodeDate = currentDate(Date.now());
+            await userOrCompany.save()
+            // await Model.findOneAndUpdate({ email: user.email },{ $set: { verificationCode: code, verificationCodeDate: currentDate(Date.now())}});
+            await sendConfirmEmail(userOrCompany.email, code, 'Confirmation Email - Luxi Application');
+            return sendResponse(res, constants.RESPONSE_FORBIDDEN, "Please activate your email first.", {}, [])
+        }
+        const userOrCompanyId = (userOrCompany.userId)?  userOrCompany.userId: userOrCompany.companyId;
+        const accToken = await jwtGenerator({ userId: userOrCompanyId, role:userOrCompany.role }, 24, "h");
+        const existingToken = await tokenSchema.findOne({ userOrCompanyId });
         if (existingToken) {
             await tokenSchema.updateOne(
-                { userId: user.userId },
+                { userOrCompanyId },
                 { $set: {token: accToken } }
             );
         } else {
             newToken = new tokenSchema({
-                userId: user.userId,
+                userId: userOrCompanyId,
                 token: accToken,
             });
             await newToken.save();
         }
         setTokenWithCookies(res, accToken);
-        const data ={
+        const data = {
             token: accToken,
-            userId: user.userId
+            userId: userOrCompanyId,
+            role: userOrCompany.role
         }
         return sendResponse(res, constants.RESPONSE_SUCCESS, 'Login successful', data, [])
-    })(req, res, next);
+    }catch(error){
+        sendResponse(res,constants.RESPONSE_INT_SERVER_ERROR,error.message,{},constants.UNHANDLED_ERROR);
+    }
 }
 
 const forgetPassword = async (req, res, next) => {
     try {
         const {email} = req.body;
-        const  user = await userModel.findOne({ email: email });
-        if (!user || user.isDeleted) {
+        const  {userOrCompany} = await chcekEmail(email);
+        if (!userOrCompany) {
             sendResponse(res, constants.RESPONSE_BAD_REQUEST, "This email does not exist", {}, [])
         } else {
             const subject="an update password Email Send From Sport-Store Application";
             const code=randomNumber();
-            const info= sendConfirmEmail(email,code,subject, "forget")
+            const info= await sendConfirmEmail(email,code,subject, "forget")
             if (info) {
-                await userModel.findOneAndUpdate(
-                    {userId: user.userId},
-                    {$set:{verificationCode:code,verificationCodeDate:currentDate(Date.now())}}
-                )
+                userOrCompany.verificationCode = code;
+                userOrCompany.verificationCodeDate = currentDate(Date.now());
+                await userOrCompany.save();
                 sendResponse(res, constants.RESPONSE_SUCCESS, `we sent you an email at ${email}`, {}, [])
             }
         }
@@ -250,13 +269,16 @@ const forgetPassword = async (req, res, next) => {
 const setPassword = async (req, res, next) => {
     try {
         const { password, code, email } = req.body;
-        const  user = await userModel.findOne({ email });
-        if (user.verificationCode === +code && validateExpiry(user.verificationCodeDate, 'minutes', 35) && code) {
+        const  {userOrCompany} = await chcekEmail(email);
+        if (userOrCompany.verificationCode === code && validateExpiry(userOrCompany.verificationCodeDate, 'minutes', 35) && code) {
             const encryptedPassword = bcrypt.hashSync(password, parseInt(CONFIG.BCRYPT_SALT));
-            await userModel.updateOne(
-                { userId: user.userId },
-                { $set: { verificationCode: "",encryptedPassword } }
-            );
+            userOrCompany.verificationCode = null;
+            userOrCompany.encryptedPassword = encryptedPassword;
+            await userOrCompany.save();
+            // await userModel.updateOne(
+            //     { userId: user.userId },
+            //     { $set: { verificationCode: "",encryptedPassword } }
+            // );
             sendResponse(res, constants.RESPONSE_SUCCESS, "Set new password successful", {}, [])
         } else {
             sendResponse( res, constants.RESPONSE_BAD_REQUEST, "Invalid or expired code", "", [])
@@ -270,7 +292,9 @@ const setPassword = async (req, res, next) => {
 
 const signOut=async(req,res,next)=>{ 
     try {
-        
+        console.log(req.user);
+        res.clearCookie("jwtToken");
+        sendResponse(res, constants.RESPONSE_SUCCESS, "log out successful", {}, [])
     } catch (error) {
         sendResponse(res,constants.RESPONSE_INT_SERVER_ERROR,error.message,"", constants.UNHANDLED_ERROR);
     }
@@ -285,7 +309,7 @@ module.exports={
     signUpUser,
     signUpCompany,
     verifyEmail,
-    resendActivateCode,
+    resendCode,
     login,
     forgetPassword,
     setPassword,

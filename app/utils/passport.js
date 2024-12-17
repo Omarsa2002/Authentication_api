@@ -47,16 +47,17 @@ const passportAuth = (passport) => {
         "appAuth",
         new Strategy(opts, async (jwt_payload, done) => {
             try {
-                let user;
                 // Determine the user type from the payload
                 const { role } = jwt_payload;
-                if (role === 'user') {
-                    [err, user] = await to(userModel.findOne({ userId: jwt_payload.userId }));
-                } else if (role === 'company') {
-                    [err, user] = await to(companyModel.findOne({ companyId: jwt_payload.userId }));
-                } else {
-                    return done(null, false, { message: 'Invalid user type in token.' });
-                }
+                const [err, user] = (role==='user')? await to(userModel.findOne({ userId: jwt_payload.userId })):
+                                                await to(companyModel.findOne({ companyId: jwt_payload.userId }))
+                // if (role === 'user') {
+                //     [err, user] = await to(userModel.findOne({ userId: jwt_payload.userId }));
+                // } else if (role === 'company') {
+                //     [err, user] = await to(companyModel.findOne({ companyId: jwt_payload.userId }));
+                // } else {
+                //     return done(null, false, { message: 'Invalid user type in token.' });
+                // }
                 if (err) return done(err, false);
                 if (!user) return done(null, false, { message: 'User not found.' });
                 LOG.info(`Logged ${role}: ${user.email}`);

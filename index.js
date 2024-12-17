@@ -3,6 +3,7 @@ const express 		  = require('express');
 const compression   = require('compression')
 const morgan 	      = require('morgan');
 const bodyParser 	  = require('body-parser');
+const cookieParser = require('cookie-parser');
 const passport      = require('passport');
 const pe            = require('parse-error');
 const cors          = require('cors');
@@ -19,12 +20,13 @@ const { addAdmin } = require('./app/utils/admin.js');
 const { limit } = require('./app/utils/util.service.js');
 globalThis.fetch = fetch;
 
-require('./app/utils/passport-config.js')(passport);
+// require('./app/utils/passport-config.js')(passport);
 //app.use(i18n.init);
 //app.use(logger('dev'));
 app.use(morgan('combined', { stream: LOG.stream }));
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: false }));
+app.use(cookieParser());
 //Passport
 app.use(passport.initialize());
 app.use(compression())
