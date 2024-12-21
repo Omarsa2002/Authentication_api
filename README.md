@@ -170,6 +170,11 @@ Content-Type: application/json
     "codeType": "updatePassword"
 }
 ```
+codeType take one of two values
+```
+"codeType":"updatePassword"
+"codeType":"activate"
+```
 
 `codeType` can take one of two values: `updatePassword` or `activate`.
 
